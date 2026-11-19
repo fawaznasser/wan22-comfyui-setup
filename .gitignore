@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.safetensors
+*.gguf
+*.mp4
+*.log
+wan_config.json
+models_manifest.json

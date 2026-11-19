@@ -1,0 +1,16 @@
+{
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "wan2.2_t2v_high_noise_14B_fp8_scaled.safetensors", "weight_dtype": "default"}, "_meta": {"title": "Load High Noise Model"}},
+  "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "wan2.2_t2v_low_noise_14B_fp8_scaled.safetensors", "weight_dtype": "default"}, "_meta": {"title": "Load Low Noise Model"}},
+  "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "type": "wan", "device": "default"}, "_meta": {"title": "Load Text Encoder"}},
+  "4": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}, "_meta": {"title": "Load VAE"}},
+  "5": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": 8.0}, "_meta": {"title": "Shift (high)"}},
+  "6": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["2", 0], "shift": 8.0}, "_meta": {"title": "Shift (low)"}},
+  "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": "A red fox trotting through a snowy pine forest at sunrise, slow tracking shot, cinematic lighting, shallow depth of field"}, "_meta": {"title": "Positive Prompt"}},
+  "8": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": "blurry, distorted, extra limbs, static, low quality, watermark, text"}, "_meta": {"title": "Negative Prompt"}},
+  "9": {"class_type": "EmptyHunyuanLatentVideo", "inputs": {"width": 1280, "height": 720, "length": 81, "batch_size": 1}, "_meta": {"title": "Empty Video Latent"}},
+  "10": {"class_type": "KSamplerAdvanced", "inputs": {"model": ["5", 0], "add_noise": "enable", "noise_seed": 42, "steps": 20, "cfg": 3.5, "sampler_name": "euler", "scheduler": "simple", "positive": ["7", 0], "negative": ["8", 0], "latent_image": ["9", 0], "start_at_step": 0, "end_at_step": 10, "return_with_leftover_noise": "enable"}, "_meta": {"title": "KSampler (high noise)"}},
+  "11": {"class_type": "KSamplerAdvanced", "inputs": {"model": ["6", 0], "add_noise": "disable", "noise_seed": 42, "steps": 20, "cfg": 3.5, "sampler_name": "euler", "scheduler": "simple", "positive": ["7", 0], "negative": ["8", 0], "latent_image": ["10", 0], "start_at_step": 10, "end_at_step": 10000, "return_with_leftover_noise": "disable"}, "_meta": {"title": "KSampler (low noise)"}},
+  "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 0]}, "_meta": {"title": "VAE Decode"}},
+  "13": {"class_type": "CreateVideo", "inputs": {"images": ["12", 0], "fps": 16.0}, "_meta": {"title": "Create Video"}},
+  "14": {"class_type": "SaveVideo", "inputs": {"video": ["13", 0], "filename_prefix": "video/wan22", "format": "auto", "codec": "auto"}, "_meta": {"title": "Save Video"}}
+}
