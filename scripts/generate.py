@@ -67,19 +67,62 @@ def queue(server, wf, client_id):
     return r["prompt_id"]
 
 
-def error_text(entry):
+# loader node -> (input key, models subfolders it reads from)
+LOADERS = {"UNETLoader": ("unet_name", ["diffusion_models", "unet"]),
+           "UnetLoaderGGUF": ("unet_name", ["unet", "diffusion_models"]),
+           "CLIPLoader": ("clip_name", ["text_encoders", "clip"]),
+           "VAELoader": ("vae_name", ["vae"])}
+CORRUPT_HINTS = ("header too small", "deserializing header", "incomplete metadata", "invalid header",
+                 "unexpected end", "file not fully covered", "no such file", "not found in")
+
+
+def check_models(cfg):
+    """Return a list of problems with the model files the workflows need (missing / empty / truncated)."""
+    models = Path(cfg["comfy_dir"]) / "models"
+    seen, issues = set(), []
+    for name in set(cfg["workflows"].values()):
+        f = HERE / "workflows" / name
+        if not f.exists():
+            continue
+        for n in json.loads(f.read_text(encoding="utf-8")).values():
+            spec = LOADERS.get(n["class_type"])
+            if not spec or n["inputs"].get(spec[0]) in seen:
+                continue
+            fname = n["inputs"][spec[0]]
+            seen.add(fname)
+            paths = [models / d / fname for d in spec[1]]
+            hit = next((p for p in paths if p.exists()), None)
+            if hit is None:
+                issues.append(f"{fname} is missing (expected in models/{spec[1][0]}/)")
+            elif hit.stat().st_size < 50 * 1024 * 1024:
+                issues.append(f"{fname} is only {hit.stat().st_size / 1e6:.1f} MB, "
+                              "so it is empty or an interrupted download")
+    return issues
+
+
+def error_text(entry, wf=None):
     """Human-readable error from a /history entry, or None if it succeeded."""
     status = entry.get("status", {})
     if status.get("status_str") != "error":
         return None
     for kind, msg in status.get("messages", []):
-        if kind == "execution_error":
-            text = f"Node {msg.get('node_type')} failed: {msg.get('exception_message')}"
-            if "out of memory" in str(msg.get("exception_message", "")).lower():
-                text += ("\nOut of GPU memory: lower the resolution, then frames, "
-                         "then use a smaller model.")
-            return text
-    return "Generation failed (no details from ComfyUI)."
+        if kind != "execution_error":
+            continue
+        exc = str(msg.get("exception_message", "")).strip()
+        node_type = msg.get("node_type")
+        low = exc.lower()
+        if node_type in LOADERS and any(h in low for h in CORRUPT_HINTS):
+            node = (wf or {}).get(str(msg.get("node_id")), {})
+            fname = node.get("inputs", {}).get(LOADERS[node_type][0], "a model file")
+            return (f"Couldn't load {fname}: the file is missing, empty or only partly downloaded.\n"
+                    "Fix: run the installer again (setup.bat / setup.sh). It re-downloads "
+                    "broken model files and skips the good ones.\n"
+                    f"(ComfyUI said: {node_type} - {exc})")
+        if "out of memory" in low or "outofmemory" in low:
+            return ("Out of GPU memory. Try in this order: a lower resolution (Draft), fewer frames, "
+                    f"a smaller model.\n(ComfyUI said: {node_type} - {exc})")
+        return f"{node_type} failed: {exc}"
+    return "Generation failed (ComfyUI gave no details)."
 
 
 def save_outputs(server, entry, outdir: Path, name, meta=None):
@@ -229,6 +272,8 @@ def run_cli():
     a.height = fix_dim(a.height, cfg["size_multiple"], "height")
 
     wf_file, wf = load_workflow(cfg, wf_key)
+    for issue in check_models(cfg):
+        print(f"WARNING: {issue}. Re-run the installer to fix it.")
 
     image_name = None
     if a.image:
@@ -258,7 +303,7 @@ def run_cli():
     elapsed = time.time() - t0
     mon.stop.set()
 
-    err = error_text(entry)
+    err = error_text(entry, wf)
     if err:
         raise ComfyError(err)
 

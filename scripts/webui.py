@@ -233,7 +233,7 @@ def watch(cfg, pid):
         entry = h[pid]
         with LOCK:
             job = JOBS[pid]
-        err = g.error_text(entry)
+        err = g.error_text(entry, job["wf"])
         elapsed = time.time() - (job["started"] or job["queued"])
         if err:
             with LOCK:
@@ -306,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"tier": c["tier"], "gpu": c.get("gpu"), "vram_gb": c.get("vram_gb"),
                             "defaults": c["defaults"], "workflows": list(c["workflows"]),
                             "comfy": STATE["comfy"], "queue": STATE.get("queue"),
-                            "comfy_url": c["server"]})
+                            "comfy_url": c["server"], "model_issues": g.check_models(c)})
         elif path.startswith("/api/job/"):
             pid = path.rsplit("/", 1)[-1]
             with LOCK:

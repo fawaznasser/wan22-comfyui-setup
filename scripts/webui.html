@@ -127,6 +127,12 @@ details > div { display: flex; flex-direction: column; gap: 12px; margin-top: 12
 .tile .cap { margin: 7px 9px; font-size: 12.5px; line-height: 1.4; color: var(--muted); display: -webkit-box;
   -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; height: 2.8em; }
 a.btn { color: inherit; display: inline-flex; align-items: center; }
+.banner { display: none; grid-column: 1 / -1; padding: 12px 16px; border-radius: 12px;
+  background: var(--warn-soft); color: var(--warn); font-size: 14px; }
+.banner.on { display: block; }
+.banner b { display: block; margin-bottom: 4px; }
+.banner ul { margin: 6px 0; padding-left: 20px; }
+.banner code { background: rgba(127,127,127,.15); padding: 1px 6px; border-radius: 5px; }
 .form, .right, .card { min-width: 0; }
 .none { color: var(--muted); padding: 10px 16px 18px; font-size: 14px; }
 
@@ -152,6 +158,7 @@ a.btn { color: inherit; display: inline-flex; align-items: center; }
 </header>
 
 <main>
+  <div class="banner" id="banner"></div>
   <section class="card form" id="form">
     <div>
       <label class="h" for="prompt">Prompt</label>
@@ -362,6 +369,11 @@ async function loadInfo() {
     $("comfylink").href = INFO.comfy_url;
     $("modelWrap").style.display = INFO.workflows.includes("5b") ? "" : "none";
     $("go").disabled = !ready || !!state.job;
+    const issues = INFO.model_issues || [];
+    $("banner").classList.toggle("on", issues.length > 0);
+    $("banner").innerHTML = issues.length ? `<b>Some model files aren't usable, so generation will fail until they're fixed.</b>
+      <ul>${issues.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>
+      Fix: run <code>setup.bat</code> (Linux: <code>./setup.sh</code>) again. It re-downloads only the broken files.` : "";
     if (!ready) setTimeout(loadInfo, 2500);
     return INFO;
   } catch { $("status").className = "pill err"; $("status").lastChild.textContent = "Wan Studio server offline";
