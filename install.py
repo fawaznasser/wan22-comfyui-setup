@@ -242,8 +242,19 @@ def write_convenience(root: Path, comfy: Path, tier: str, gpu: dict, workflows: 
            "size_multiple": 16 if tier == "a14b" else 32,
            "workflows": workflows, "defaults": DEFAULTS[tier]}
     (root / "wan_config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    shutil.copy2(HERE / "scripts" / "generate.py", root / "generate.py")
+    for f in ("generate.py", "webui.py", "webui.html"):
+        shutil.copy2(HERE / "scripts" / f, root / f)
     (root / "videos").mkdir(exist_ok=True)
+    venv_py = venv_python(comfy)
+    if IS_WIN:
+        (root / "start_ui.bat").write_text(
+            "@echo off\r\nrem Starts ComfyUI (if not running) + Wan Studio, opens the browser.\r\n"
+            f'"{venv_py}" "%~dp0webui.py" %*\r\n', encoding="utf-8")
+    else:
+        ui = root / "start_ui.sh"
+        ui.write_text("#!/usr/bin/env bash\n# Starts ComfyUI (if not running) + Wan Studio.\n"
+                      f'exec "{venv_py}" "$(dirname "$0")/webui.py" "$@"\n', encoding="utf-8")
+        ui.chmod(0o755)
 
     if IS_WIN:
         launcher = root / "start_wan.bat"
@@ -287,11 +298,20 @@ def write_readme(root, tier, gpu, quant, launcher, gen):
 - A14B native: 1280x720 or 832x480, 81 frames, 20 steps, cfg 3.5, **16 fps**.
 - Use `--workflow 5b` for the faster TI2V-5B model (24 fps, 1280x704).""",
     }[tier]
+    ui = "start_ui.bat" if IS_WIN else "./start_ui.sh"
     text = f"""# Wan 2.2 (local, ComfyUI)
 
 Installed for **{gpu['name']}** ({gpu['vram_gb']:.1f} GB VRAM). Tier: **{tier}**.
 
-## Start the server
+## Easiest: Wan Studio (browser UI)
+
+```
+{ui}
+```
+
+This starts ComfyUI and opens **http://127.0.0.1:7860** in your browser. There you can type a prompt, drop in an image if you want image-to-video, pick an aspect ratio, quality and length, then click **Generate**. You get a live progress bar, the video plays in the page, and every result is kept in a gallery. Press Ctrl+C in that window to stop everything.
+
+## Command line: start the server
 
 ```
 {run_launch}
@@ -451,6 +471,8 @@ def main():
     pre = "" if IS_WIN else "./"
     print("\n   Day to day:")
     print(f"     cd {root}")
+    print(f"     {pre}start_ui{'.bat' if IS_WIN else '.sh'}                           # browser UI at http://127.0.0.1:7860")
+    print("   or the command line:")
     print(f"     {pre}{launcher.name}                          # terminal 1: start server")
     print(f'     {pre}{gen.name} --prompt "your prompt"       # terminal 2: make a video')
     print(f"   Read {root / 'README.md'} for settings.")

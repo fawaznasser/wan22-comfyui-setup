@@ -13,7 +13,7 @@ On the machine you run it on, the installer:
 
 2. **Installs ComfyUI** into `C:\ai\` (Windows) or `~/ai/` (Linux), creates a venv, installs the PyTorch CUDA build that matches your driver, and checks that `torch.cuda.is_available()` returns True. It also adds ComfyUI-Manager, plus ComfyUI-GGUF on the `gguf` tier.
 3. **Downloads the models** from `Comfy-Org/Wan_2.2_ComfyUI_Repackaged` (and `QuantStack/Wan2.2-TI2V-5B-GGUF` for GGUF). It reads each repo's current file list, so renamed files are still found. Downloads resume after a failure, and file sizes are checked afterwards. It asks before downloading more than 50 GB.
-4. **Writes the convenience files**: a `start_wan` launcher, `generate.py` (plus a `generate` wrapper), API-format workflows, and a README tailored to your GPU.
+4. **Writes the convenience files**: the **Wan Studio** browser UI (`start_ui`), a `start_wan` launcher, `generate.py` (plus a `generate` wrapper), API-format workflows, and a README tailored to your GPU.
 5. **Runs a test generation** if you want one. It makes a 49-frame, 832x480 clip at 20 steps through the ComfyUI HTTP API, then reports the time and peak VRAM.
 
 ## Requirements
@@ -55,7 +55,26 @@ chmod +x setup.sh && ./setup.sh
 
 You can safely re-run the installer. It skips models that are already downloaded and resumes partial downloads.
 
-## Daily use
+## Daily use: Wan Studio (browser UI)
+
+```bat
+cd C:\ai
+start_ui.bat          & rem Linux: ./start_ui.sh
+```
+
+This starts ComfyUI if it isn't already running and opens **http://127.0.0.1:7860**. In the page you can:
+
+- write a prompt, or start from one of the example chips
+- drop or paste an image to switch to **image-to-video**
+- choose an aspect ratio (Landscape / Portrait / Square), a quality (Draft / Standard / High) and a length in seconds
+- open **Advanced settings** for the negative prompt, exact size, steps, CFG, seed and (on 24 GB+ GPUs) the A14B/5B model choice
+- click **Generate** (or press Ctrl+Enter) and follow the live progress bar, which shows the current stage, step x/y and an estimate of the time left. A Cancel button stops the job.
+- watch the result in the page, and browse every video in the gallery, where you can **reuse settings**, download or delete
+
+Press Ctrl+C in the `start_ui` window to stop both servers. Options: `--port 7860 --no-browser --no-comfy`.
+ComfyUI's own node editor is still at http://127.0.0.1:8188.
+
+## Daily use: command line
 
 ```bat
 cd C:\ai
@@ -81,7 +100,8 @@ Videos are saved to `videos/` with a timestamp in the name.
 setup.bat / setup.ps1 / setup.sh   entry points (find Python, run install.py)
 install.py                          main installer
 scripts/download_models.py          Hugging Face downloader (runs in the ComfyUI venv)
-scripts/generate.py                 API client, copied to the install folder
+scripts/generate.py                 command-line API client, copied to the install folder
+scripts/webui.py + webui.html       Wan Studio browser UI (standard library only, works offline)
 workflows/*.json                    API-format workflows (5B, T2V-A14B, I2V-A14B)
 docs/AGENT_PROMPT.md                same setup as a prompt for a coding agent
 ```

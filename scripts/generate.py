@@ -26,17 +26,77 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 NEG_DEFAULT = "blurry, distorted, extra limbs, static, low quality, watermark, text"
 LATENT_NODES = {"Wan22ImageToVideoLatent", "EmptyHunyuanLatentVideo", "WanImageToVideo"}
+VIDEO_EXT = (".mp4", ".webm", ".mov", ".mkv", ".gif", ".webp")
 
 
-def http(server, path, data=None, headers=None):
+class ComfyError(Exception):
+    pass
+
+
+def http(server, path, data=None, headers=None, timeout=60):
     req = urllib.request.Request(server + path, data=data, headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.read()
     except urllib.error.HTTPError as e:
-        sys.exit(f"ComfyUI returned {e.code} for {path}:\n{e.read().decode(errors='replace')}")
-    except urllib.error.URLError as e:
-        sys.exit(f"Can't reach ComfyUI at {server} ({e.reason}). Start it with start_wan first.")
+        raise ComfyError(f"ComfyUI returned {e.code} for {path}:\n{e.read().decode(errors='replace')}")
+    except (urllib.error.URLError, OSError) as e:
+        raise ComfyError(f"Can't reach ComfyUI at {server} ({getattr(e, 'reason', e)}). "
+                         "Start it with start_wan first.")
+
+
+def load_config():
+    p = HERE / "wan_config.json"
+    if not p.exists():
+        raise ComfyError(f"{p} not found - run install.py first.")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def load_workflow(cfg, key):
+    f = Path(cfg["workflows"].get(key, key))
+    if not f.is_absolute():
+        f = HERE / "workflows" / f
+    if not f.exists():
+        raise ComfyError(f"Workflow not found: {f}")
+    return f, json.loads(f.read_text(encoding="utf-8"))
+
+
+def queue(server, wf, client_id):
+    r = json.loads(http(server, "/prompt", json.dumps({"prompt": wf, "client_id": client_id}).encode(),
+                        {"Content-Type": "application/json"}))
+    return r["prompt_id"]
+
+
+def error_text(entry):
+    """Human-readable error from a /history entry, or None if it succeeded."""
+    status = entry.get("status", {})
+    if status.get("status_str") != "error":
+        return None
+    for kind, msg in status.get("messages", []):
+        if kind == "execution_error":
+            text = f"Node {msg.get('node_type')} failed: {msg.get('exception_message')}"
+            if "out of memory" in str(msg.get("exception_message", "")).lower():
+                text += ("\nOut of GPU memory: lower the resolution, then frames, "
+                         "then use a smaller model.")
+            return text
+    return "Generation failed (no details from ComfyUI)."
+
+
+def save_outputs(server, entry, outdir: Path, name, meta=None):
+    files = [f for out in entry.get("outputs", {}).values() for v in out.values() if isinstance(v, list)
+             for f in v if isinstance(f, dict) and str(f.get("filename", "")).lower().endswith(VIDEO_EXT)]
+    outdir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved = []
+    for k, f in enumerate(files):
+        q = urllib.parse.urlencode({"filename": f["filename"], "subfolder": f.get("subfolder", ""),
+                                    "type": f.get("type", "output")})
+        dest = outdir / f"{name}_{stamp}{'_' + str(k) if k else ''}{Path(f['filename']).suffix}"
+        dest.write_bytes(http(server, f"/view?{q}", timeout=600))
+        if meta is not None:
+            dest.with_suffix(".json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        saved.append(dest)
+    return saved
 
 
 def upload_image(server, path: Path):
@@ -128,15 +188,19 @@ def build(cfg, wf, a, image_name):
             if n["class_type"] == "Wan22ImageToVideoLatent":
                 n["inputs"]["start_image"] = [nid, 0]
     if has_loadimage and not image_name:
-        sys.exit("This workflow is image-to-video; pass --image.")
+        raise ComfyError("This workflow is image-to-video; pass --image.")
     return wf
 
 
 def main():
-    cfg_path = HERE / "wan_config.json"
-    if not cfg_path.exists():
-        sys.exit(f"{cfg_path} not found - run install.py first.")
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    try:
+        run_cli()
+    except ComfyError as e:
+        sys.exit(str(e))
+
+
+def run_cli():
+    cfg = load_config()
     d = cfg["defaults"]
 
     ap = argparse.ArgumentParser(description="Generate a Wan 2.2 video via ComfyUI")
@@ -164,26 +228,18 @@ def main():
     a.width = fix_dim(a.width, cfg["size_multiple"], "width")
     a.height = fix_dim(a.height, cfg["size_multiple"], "height")
 
-    wf_file = Path(cfg["workflows"].get(wf_key, wf_key))
-    if not wf_file.is_absolute():
-        wf_file = HERE / "workflows" / wf_file
-    if not wf_file.exists():
-        sys.exit(f"Workflow not found: {wf_file}")
-    wf = json.loads(wf_file.read_text(encoding="utf-8"))
+    wf_file, wf = load_workflow(cfg, wf_key)
 
     image_name = None
     if a.image:
         if not a.image.exists():
-            sys.exit(f"Image not found: {a.image}")
+            raise ComfyError(f"Image not found: {a.image}")
         image_name = upload_image(a.server, a.image)
     wf = build(cfg, wf, a, image_name)
 
     print(f"Workflow {wf_file.name} | {a.width}x{a.height} | {a.frames} frames | "
           f"{a.steps} steps | seed {a.seed}" + (f" | image {a.image.name}" if a.image else ""))
-    client = uuid.uuid4().hex
-    r = json.loads(http(a.server, "/prompt", json.dumps({"prompt": wf, "client_id": client}).encode(),
-                        {"Content-Type": "application/json"}))
-    pid = r["prompt_id"]
+    pid = queue(a.server, wf, uuid.uuid4().hex)
     print(f"Queued prompt {pid}")
 
     mon = VramMonitor()
@@ -202,30 +258,19 @@ def main():
     elapsed = time.time() - t0
     mon.stop.set()
 
-    status = entry.get("status", {})
-    if status.get("status_str") == "error":
-        for kind, msg in status.get("messages", []):
-            if kind == "execution_error":
-                print(f"\nNode {msg.get('node_type')} failed: {msg.get('exception_message')}")
-                if "out of memory" in str(msg.get("exception_message", "")).lower():
-                    print("OOM: lower --width/--height, then --frames, then use a smaller model.")
-        sys.exit("Generation failed.")
+    err = error_text(entry)
+    if err:
+        raise ComfyError(err)
 
-    files = [f for out in entry.get("outputs", {}).values() for v in out.values() if isinstance(v, list)
-             for f in v if isinstance(f, dict) and str(f.get("filename", "")).lower()
-             .endswith((".mp4", ".webm", ".mov", ".gif", ".webp"))]
-    if not files:
-        sys.exit(f"Finished in {elapsed:.0f}s but no video output was found: {entry.get('outputs')}")
-
-    a.outdir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    for k, f in enumerate(files):
-        q = urllib.parse.urlencode({"filename": f["filename"], "subfolder": f.get("subfolder", ""),
-                                    "type": f.get("type", "output")})
-        suffix = Path(f["filename"]).suffix
-        dest = a.outdir / f"{a.name}_{stamp}{'_' + str(k) if k else ''}{suffix}"
-        dest.write_bytes(http(a.server, f"/view?{q}"))
-        print(f"Saved {dest}  (ComfyUI/output/{f.get('subfolder', '')}/{f['filename']})")
+    meta = {"prompt": a.prompt, "negative": a.negative, "width": a.width, "height": a.height,
+            "frames": a.frames, "steps": a.steps, "seed": a.seed, "cfg": a.cfg, "fps": a.fps,
+            "workflow": wf_key, "image": a.image.name if a.image else None,
+            "seconds": round(elapsed), "peak_vram_gb": round(mon.peak / 1024, 1) if mon.peak else None}
+    saved = save_outputs(a.server, entry, a.outdir, a.name, meta)
+    if not saved:
+        raise ComfyError(f"Finished in {elapsed:.0f}s but no video output was found: {entry.get('outputs')}")
+    for dest in saved:
+        print(f"Saved {dest}")
     print(f"Generation time: {elapsed:.0f}s" +
           (f" | peak VRAM: {mon.peak / 1024:.1f} GB" if mon.peak else ""))
 
